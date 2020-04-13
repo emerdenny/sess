@@ -1,0 +1,5 @@
+# This file is a registry for all current sess projects.
+# To register a project, type sess -e /full/directory/path to the TLD of the project on the local system.
+
+/Users/emerdenny/Dropbox/git/pycomms
+

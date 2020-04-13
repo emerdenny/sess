@@ -1,0 +1,250 @@
+#!/bin/zsh
+
+########## SCRIPT HEADER ##########
+
+DEBUG='off'
+
+Debug() {
+	if [[ "${DEBUG}" == 'on' ]]
+	then
+		echo "${1}" 
+	fi
+}
+
+Debug '### Top of file ###'
+
+usage() {
+	echo "Usage: ${0} [-ud] [-t TARGET]" >&2
+	echo 'Manage sessions of local app development/deployment on Vagrant boxes.'
+	echo '  -t TARGET Specify the desired app to manage.'
+       	echo '  -u        Boot up the sess environment for the TARGET project.'
+	echo '  -d        Shut down the sess environment for the TARGET project.'
+	echo '       OPTIONS -u and -d are mutually exclusive.'
+	exit 1
+}
+
+###------ ANSI escape (color) codes -----###
+BLACK='\033[0;30m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+ORANGE='\033[0;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+LGRAY='\033[0;37m'
+DGRAY='\033[1;30m'
+LRED='\033[1;31m'
+LGREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+LBLUE='\033[1;34m'
+LPURPLE='\033[1;35m'
+LCYAN='\033[1;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+###--------------------------------------###
+
+########## END SCRIPT HEADER ##########
+
+
+
+########## FUNCTION DECLARATIONS ##########
+
+Pane_Init() {
+	###--- Function builds tmux panes differently if vagrant boxes must be brought up or are already running ---###
+	Debug 'Pane_Init executed'
+	if [[ "$(vagrant global-status | grep "${SUBPROJECTS[i]}" | grep running >/dev/null ; echo ${?} 2>&1)" == 1 ]]
+	then
+		tmux send 'vagrant up ; vagrant ssh' ENTER;
+		tmux split-window -h -c "${LOCAL_APP_PATH}/${PROJECT_NAME}_${SUBPROJECTS[i]}/";
+		tmux send 'sleep 60 ; vagrant ssh' ENTER;
+		tmux split-window -v -c "${LOCAL_APP_PATH}/${PROJECT_NAME}_${SUBPROJECTS[i]}/";
+		tmux send "sleep 60.5 ; vagrant ssh -- -t 'sudo /usr/sbin/nethogs'" ENTER;
+		tmux split-window -v -c "${LOCAL_APP_PATH}/${PROJECT_NAME}_${SUBPROJECTS[i]}/";
+		tmux resize-pane -U 8
+		tmux send "sleep 61 ; vagrant ssh -- -t 'htop -u vagrant'" ENTER;
+	else
+		tmux send 'vagrant ssh' ENTER;
+		sleep 0.5
+		tmux split-window -h -c "${LOCAL_APP_PATH}/${PROJECT_NAME}_${SUBPROJECTS[i]}/";
+		tmux send 'vagrant ssh' ENTER;
+		sleep 0.5
+		tmux split-window -v -c "${LOCAL_APP_PATH}/${PROJECT_NAME}_${SUBPROJECTS[i]}/";
+		tmux send "vagrant ssh -- -t 'sudo /usr/sbin/nethogs'" ENTER;
+		sleep 0.5
+		tmux split-window -v -c "${LOCAL_APP_PATH}/${PROJECT_NAME}_${SUBPROJECTS[i]}/";
+		tmux resize-pane -U 8
+		tmux send "vagrant ssh -- -t 'htop -u vagrant'" ENTER;
+	fi
+	Debug 'Pane_Init finished'
+}
+
+
+Up_Main() {
+	###--- Builds tmux session and windows for each of the subprojects ---###
+	Debug 'Up_Main executed'
+	for (( i=1; i<${SUB_LEN}+1; i++ )) 
+	do
+		if (( ${i} == 1 ))
+		then
+			tmux new-session -d -s "${PROJECT_NAME}" -n "${SUBPROJECTS[i]}" -c "${LOCAL_APP_PATH}/${PROJECT_NAME}_${SUBPROJECTS[i]}/";
+			Pane_Init	
+		else
+			tmux new-window -t "=${PROJECT_NAME}" -n "${SUBPROJECTS[i]}" -c "${LOCAL_APP_PATH}/${PROJECT_NAME}_${SUBPROJECTS[i]}/";
+			Pane_Init	
+		fi
+	done
+
+	Debug 'Up_Main finished'
+
+	tmux a -t "${PROJECT_NAME}";
+}
+
+
+Down_Main() {
+	###--- Halts vagrant boxes and kills tmux session for the project ---###
+	Debug 'Down_Main executed'
+	for (( i=1; i<${SUB_LEN}+1; i++ )) 
+	do
+		cd "${LOCAL_APP_PATH}/${PROJECT_NAME}_${SUBPROJECTS[i]}/"
+		vagrant halt
+	done
+
+	tmux kill-session -t "${PROJECT_NAME}"
+
+	Debug 'Down_Main finished'
+}
+
+########## END FUNCTION DECLARATIONS ##########
+
+
+
+########## MAIN SCRIPT BODY ##########
+
+###--- Check to see if sess is being run from tmux, no nesting allowed. ---###
+if [[ -n "${TMUX}" ]]
+then
+	echo "${RED}sess may not be called from within tmux.${NC}"
+	echo
+	echo
+	usage
+fi
+###------------------------------------------------------------------------###
+
+###--- Resolve symlink in /usr/local/bin and capture true SCRIPT_PATH to find .sessrc registry ---###
+SCRIPT_PATH="$( dirname $( readlink $( which ${0} ) ) )"
+Debug "### SCRIPT_PATH = ${SCRIPT_PATH} ###"
+###-----------------------------------------------------------------------------------------------###
+
+###--- Parse command line arguments ---###
+while getopts udt: OPTION
+do
+	case ${OPTION} in
+		u)
+			UP='true'
+			Debug "### UP case ###"
+			if [[ "${DOWN}" == 'true' ]]
+			then
+				echo -e "${RED}Options -u and -d cannot be run together.${NC}"
+				echo
+				echo
+				usage
+			fi
+			;;
+		d)
+			DOWN='true'
+			Debug "### DOWN case ###"
+			if [[ "${UP}" == 'true' ]]
+			then
+				echo -e "${RED}Options -u and -d cannot be run together.${NC}"
+				echo
+				echo
+				usage
+			fi
+			;;
+		t)
+			TARGET="${OPTARG}"
+			Debug "### TARGET = ${TARGET} ###"
+			;;
+		?)
+			usage
+			;;
+	esac
+done
+###------------------------------------###
+
+###--- Check if argument supplied to -t corresponds to valid project name ---###
+if [[ $( cat "${SCRIPT_PATH}"/.sessrc | grep "${TARGET}" ) ]]
+then
+	LOCAL_APP_PATH="$( cat "${SCRIPT_PATH}"/.sessrc | grep ${TARGET} )"
+	Debug "### LOCAL_APP_PATH = ${LOCAL_APP_PATH} ###"
+else
+	echo -e "${BLUE}${TARGET}${NC}${RED} is an invalid project name.${NC}"
+	echo 'Please enter one of the valid project names listed below, or register a new project.'
+	echo
+	echo $( cat "${SCRIPT_PATH}"/.sessrc | grep "${USER}" | rev | cut -d '/' -f 1 | rev )
+	echo
+	echo
+	usage
+fi
+cd "${LOCAL_APP_PATH}"
+###--------------------------------------------------------------------------###
+
+###--- Set PROJECT_NAME to name of parent file in project path ---###
+PROJECT_NAME=$( basename ${LOCAL_APP_PATH} )
+Debug "### PROJECT_NAME = $( basename ${LOCAL_APP_PATH} ) ###"
+###---------------------------------------------------------------###
+
+#--- Get all subprojects in application, e.g. folder_name/ ---###
+SUBPROJECTS=("${LOCAL_APP_PATH}"/*/)
+SUB_LEN="${#SUBPROJECTS[@]}"
+#-------------------------------------------------------------###
+
+###--- Strip middle _ and trailing /, e.g. folder_name/ -> name ---###
+for (( i=1; i<${SUB_LEN}+1; i++ )) 
+do
+	SUBPROJECTS[i]=$( echo "${SUBPROJECTS[i]}" | cut -d'_' -f2 | cut -d'/' -f1 )
+done
+###----------------------------------------------------------------###
+
+###--- Check to see if .app_name_network file exists ---###
+# TODO Implement write file
+if ! [[ -f "${LOCAL_APP_PATH}/.sess.network" ]]
+then
+	WRITE_NET_FILE=1
+else
+	WRITE_NET_FILE=0
+fi
+###-----------------------------------------------------###
+
+###--- If existing tmux session called PROJECT_NAME option to restart or use ---###
+if [[ $(tmux ls | grep "${PROJECT_NAME}" ; test ${PIPESTATUS[0]}) && "${UP}" == 'true' ]]
+then
+	echo "Do you wish to restart the active tmux session: ${PROJECT_NAME}?"
+	select yn in "Yes" "No"; do
+	    case $yn in
+		Yes ) tmux kill-session -t "${PROJECT_NAME}"; break;;
+		No ) tmux a -t "${PROJECT_NAME}"; exit;;
+	    esac
+	done
+fi
+###-----------------------------------------------------------------------------###
+
+###--- Main script control flow based on command line arguments ---###
+if [[ "${UP}" == 'true' && ! -z "${TARGET}" ]]
+then
+	Up_Main
+elif [[ "${DOWN}" == 'true' && ! -z "${TARGET}" ]]
+then
+	Down_Main
+else
+	echo 'Provide -t TARGET and either the -u or -d options to run'
+	echo
+	echo
+	usage
+fi
+###----------------------------------------------------------------###
+
+########## END MAIN SCRIPT BODY ##########
+
+exit 0
+
