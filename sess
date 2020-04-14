@@ -101,12 +101,13 @@ Up_Main() {
 
 
 Down_Main() {
-	###--- Halts vagrant boxes and kills tmux session for the project ---###
+	###--- Halts or destroys vagrant boxes based on DTYPE choice and kills tmux session for the project ---###
 	Debug 'Down_Main executed'
+	DTYPE="${1}"
 	for (( i=1; i<${SUB_LEN}+1; i++ )) 
 	do
 		cd "${LOCAL_APP_PATH}/${PROJECT_NAME}_${SUBPROJECTS[i]}/"
-		vagrant halt
+		vagrant "${DTYPE}" 
 	done
 
 	tmux kill-session -t "${PROJECT_NAME}"
@@ -229,13 +230,26 @@ then
 fi
 ###-----------------------------------------------------------------------------###
 
+###--- When running with -d should the vagrant boxes be halted or destroyed? ---###
+if [[ "${DOWN}" == 'true' ]]
+then
+	echo "Do you wish to halt or destroy the vagrant boxes for project: ${PROJECT_NAME}?"
+	select hd in "Halt" "Destroy"; do
+	    case $hd in
+		Halt ) DTYPE='halt'; break;;
+		Destroy ) DTYPE='destroy'; break;;
+	    esac
+	done
+fi
+###-----------------------------------------------------------------------------###
+
 ###--- Main script control flow based on command line arguments ---###
 if [[ "${UP}" == 'true' && ! -z "${TARGET}" ]]
 then
 	Up_Main
 elif [[ "${DOWN}" == 'true' && ! -z "${TARGET}" ]]
 then
-	Down_Main
+	Down_Main "${DTYPE}"
 else
 	echo 'Provide -t TARGET and either the -u or -d options to run'
 	echo
